@@ -1,9 +1,9 @@
 # Plus Key custom ROM integration guide
 
-The OnePlus 13s / 13T family in this tree is built as `infiniti`. It replaces
-the old alert slider flow with a programmable Plus Key. Stock OOS exposes that
-key as a first-class shortcut for actions such as camera, flashlight,
-screenshot, recorder, and sound profile changes.
+The OnePlus 15 in this tree is built as `infiniti`. It replaces the old alert
+slider flow with a programmable Plus Key. Stock OOS exposes that key as a
+first-class shortcut for actions such as camera, flashlight, screenshot,
+recorder, and sound profile changes.
 
 This custom ROM implementation has three independent pieces. Together they
 replace the AOSP and LineageOS Assist-key plumbing with the PlusKey APK.
@@ -51,6 +51,17 @@ privileged permissions, including:
 The privapp allowlist is `com.oplus.pluskey.xml`. Keeping the permission list in
 the allowlist makes missing-permission regressions fail during build instead of
 silently breaking at runtime.
+
+The APK is included in the build from `device/oneplus/infiniti/device.mk`:
+
+```make
+PRODUCT_PACKAGES += \
+    PlusKey
+```
+
+When porting, add `PlusKey` to the target device's `PRODUCT_PACKAGES` list, or
+the module will build only when requested manually and will not be installed in
+normal ROM images.
 
 ### Entry points
 
@@ -251,11 +262,12 @@ For another OnePlus device with the same `KEYCODE_ASSIST` hardware behavior:
 
 1. Copy `parts/PlusKey/` and make sure the APK is platform-signed and installed
    as privileged under `/system_ext`.
-2. Reuse `patches/0009-settings-pluskey-category.patch` for Settings unless the
+2. Add `PlusKey` to the target device's `PRODUCT_PACKAGES`.
+3. Reuse `patches/0009-settings-pluskey-category.patch` for Settings unless the
    target ROM has a substantially different homepage layout.
-3. Apply the Assist-bit removal to that device's own Lineage overlay. Do not
+4. Apply the Assist-bit removal to that device's own Lineage overlay. Do not
    assume Infiniti's overlay path exists on another tree.
-4. Rename or extend `InfinitiPlusKey` and update the supported codename list.
+5. Rename or extend `InfinitiPlusKey` and update the supported codename list.
    Keep the device gate. Removing it would change Assist-key behavior for every
    device sharing that `frameworks/base` build.
 
