@@ -5,6 +5,12 @@
 
     <string name="service_running">Plus Key handler running</string>
     <string name="long_press_hint">Press and hold to use</string>
+    <string name="short_press">Short press</string>
+    <string name="long_press">Long press</string>
+    <string name="pluskey_settings">Plus Key settings</string>
+    <string name="setting_short_screen_on_only">Short press only when screen is on</string>
+    <string name="setting_camera_trigger">Use as camera trigger</string>
+    <string name="setting_camera_trigger_apps">Camera trigger apps</string>
 
     <!-- Action labels + descriptions. Descriptions use the OnePlus stock
          pattern: "Press and hold to <verb> &quot;Target&quot;." -->

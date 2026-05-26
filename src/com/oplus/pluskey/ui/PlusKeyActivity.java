@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.PopupMenu;
 import android.widget.TextView;
@@ -52,10 +53,12 @@ public class PlusKeyActivity extends Activity {
     private TextView mOpenAppPickerLabel;
     private View mCameraPicker;
     private TextView mCameraPickerLabel;
+    private TextView mGestureSelector;
     private TextView mCtaButton;
     private RecyclerView mChipRow;
     private ActionChipAdapter mAdapter;
 
+    private boolean mEditingLongPress = true;
     private int mSavedActionId;       // the user's persisted choice (-1 = unset)
     private int mFocusedActionId;     // whichever chip is currently centred
 
@@ -79,8 +82,26 @@ public class PlusKeyActivity extends Activity {
 
         MaterialToolbar tb = findViewById(R.id.toolbar);
         tb.setNavigationOnClickListener(v -> finish());
+        ImageButton settingsButton = new ImageButton(this);
+        settingsButton.setImageResource(R.drawable.ic_settings);
+        settingsButton.setBackgroundResource(android.R.color.transparent);
+        settingsButton.setColorFilter(getColor(android.R.color.transparent));
+        settingsButton.clearColorFilter();
+        settingsButton.setContentDescription(getString(R.string.pluskey_settings));
+        settingsButton.setPadding(
+                (int) (16 * getResources().getDisplayMetrics().density),
+                (int) (16 * getResources().getDisplayMetrics().density),
+                (int) (16 * getResources().getDisplayMetrics().density),
+                (int) (16 * getResources().getDisplayMetrics().density));
+        tb.addView(settingsButton, new MaterialToolbar.LayoutParams(
+                (int) (56 * getResources().getDisplayMetrics().density),
+                (int) (56 * getResources().getDisplayMetrics().density),
+                Gravity.END | Gravity.CENTER_VERTICAL));
+        settingsButton.setOnClickListener(v -> showSettingsMenu(settingsButton));
 
         mHalo = findViewById(R.id.pill_halo);
+        mGestureSelector = findViewById(R.id.gesture_selector);
+        mGestureSelector.setOnClickListener(v -> showGestureMenu());
         mActionIcon = findViewById(R.id.action_icon);
         mActionLabel = findViewById(R.id.action_label);
         mActionDesc = findViewById(R.id.action_desc);
@@ -94,7 +115,7 @@ public class PlusKeyActivity extends Activity {
         mCtaButton = findViewById(R.id.cta_button);
         mChipRow = findViewById(R.id.action_chips);
 
-        mSavedActionId = Settings.getAction(this);
+        mSavedActionId = Settings.getAction(this, mEditingLongPress);
         // If the user has never picked anything, initialise the focused
         // chip to the default but DON'T persist it — they'll have to tap Set.
         int initialFocus = mSavedActionId == Constants.ACTION_UNSET
@@ -102,6 +123,7 @@ public class PlusKeyActivity extends Activity {
 
         setupCameraPicker();
         setupChipRow(initialFocus);
+        updateGestureSelector();
         renderFocus(initialFocus, /*animate=*/false);
         animateEntry();
     }
@@ -197,6 +219,63 @@ public class PlusKeyActivity extends Activity {
         if (mChipRow.getLayoutManager() != null) {
             mChipRow.getLayoutManager().startSmoothScroll(s);
         }
+    }
+
+    private void switchGesture(boolean longPress) {
+        if (mEditingLongPress == longPress) return;
+        mEditingLongPress = longPress;
+        mSavedActionId = Settings.getAction(this, mEditingLongPress);
+        int actionId = mSavedActionId == Constants.ACTION_UNSET
+                ? Constants.DEFAULT_DISPLAY_ACTION : mSavedActionId;
+        updateGestureSelector();
+        renderFocus(actionId, /*animate=*/true);
+        int pos = ActionRegistry.indexOf(actionId);
+        mAdapter.setCenteredPosition(pos);
+        scrollToCenter(pos);
+        Haptics.scrollDetent(this);
+    }
+
+    private void updateGestureSelector() {
+        mGestureSelector.setText(getString(mEditingLongPress
+                ? R.string.long_press : R.string.short_press) + "  v");
+    }
+
+    private void showGestureMenu() {
+        PopupMenu pm = new PopupMenu(this, mGestureSelector, Gravity.END);
+        pm.getMenu().add(0, 0, 0, R.string.short_press);
+        pm.getMenu().add(0, 1, 1, R.string.long_press);
+        pm.setOnMenuItemClickListener(item -> {
+            switchGesture(item.getItemId() == 1);
+            return true;
+        });
+        pm.show();
+    }
+
+    private void showSettingsMenu(View anchor) {
+        PopupMenu pm = new PopupMenu(this, anchor, Gravity.END);
+        pm.getMenu().add(0, 0, 0, R.string.setting_short_screen_on_only)
+                .setCheckable(true)
+                .setChecked(Settings.isShortPressScreenOnOnly(this));
+        pm.getMenu().add(0, 1, 1, R.string.setting_camera_trigger)
+                .setCheckable(true)
+                .setChecked(Settings.isCameraTriggerEnabled(this));
+        pm.getMenu().add(0, 2, 2, R.string.setting_camera_trigger_apps);
+        pm.setOnMenuItemClickListener(item -> {
+            boolean enabled = !item.isChecked();
+            if (item.getItemId() == 0) {
+                Settings.setShortPressScreenOnOnly(this, enabled);
+            } else if (item.getItemId() == 1) {
+                Settings.setCameraTriggerEnabled(this, enabled);
+            } else if (item.getItemId() == 2) {
+                startActivity(new android.content.Intent(this, AppPickerActivity.class)
+                        .putExtra(AppPickerActivity.EXTRA_MODE,
+                                AppPickerActivity.MODE_CAMERA_TRIGGER));
+                return true;
+            }
+            item.setChecked(enabled);
+            return true;
+        });
+        pm.show();
     }
 
     // -------------------------------------------------------------- focused
@@ -304,7 +383,7 @@ public class PlusKeyActivity extends Activity {
             startActivity(new android.content.Intent(this, AppPickerActivity.class));
             return;
         }
-        Settings.setAction(this, mFocusedActionId);
+        Settings.setAction(this, mEditingLongPress, mFocusedActionId);
         mSavedActionId = mFocusedActionId;
         updateCta();
     }

@@ -3,6 +3,7 @@ package com.oplus.pluskey.ui;
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.BlurMaskFilter;
@@ -55,6 +56,14 @@ public class GlowingPillView extends View {
 
     /** Alpha used for the noise overlay (0..255). Low value = subtle. */
     private static final int NOISE_ALPHA = 22;
+    private static final int NOISE_ALPHA_LIGHT = 10;
+
+    private static final int[] PILL_GRADIENT_DARK = {
+            0xFF1A1A1C, 0xFF222226, 0xFF131315
+    };
+    private static final int[] PILL_GRADIENT_LIGHT = {
+            0xFFF2F0EA, 0xFFFFFFFF, 0xFFE6E1DA
+    };
 
     private final Paint mFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint mNoisePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -141,9 +150,10 @@ public class GlowingPillView extends View {
 
         // 1. Interior fill — vertical gradient that subtly fakes a curved
         //    metal surface lit from above.
+        boolean night = isNightMode();
         LinearGradient grad = new LinearGradient(
                 0, top, 0, bottom,
-                new int[]{0xFF1A1A1C, 0xFF222226, 0xFF131315},
+                night ? PILL_GRADIENT_DARK : PILL_GRADIENT_LIGHT,
                 new float[]{0f, 0.45f, 1f},
                 Shader.TileMode.CLAMP);
         mFillPaint.setShader(grad);
@@ -154,12 +164,13 @@ public class GlowingPillView extends View {
         //    clips the noise to the pill silhouette automatically because
         //    we paint via drawRoundRect with the noise BitmapShader fill).
         if (mNoiseShader != null) {
+            mNoisePaint.setAlpha(night ? NOISE_ALPHA : NOISE_ALPHA_LIGHT);
             canvas.drawRoundRect(mRect, radius, radius, mNoisePaint);
         }
 
         // 3. Outer glow — wide blurred stroke. Done BEFORE the sharp stroke
         //    so the sharp edge sits crisply on top of the soft halo.
-        mGlowPaint.setColor(withAlpha(mAccent, 0.95f));
+        mGlowPaint.setColor(withAlpha(mAccent, night ? 0.95f : 0.45f));
         canvas.drawRoundRect(mRect, radius, radius, mGlowPaint);
 
         // 4. Sharp stroke — solid accent, no blur. This is the "metal tube"
@@ -171,6 +182,11 @@ public class GlowingPillView extends View {
     private static int withAlpha(int color, float factor) {
         int a = Math.round(Color.alpha(color) * factor);
         return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color));
+    }
+
+    private boolean isNightMode() {
+        return (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
     }
 
     private float dp(float v) {

@@ -14,10 +14,16 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.FLASHLIGHT"/>
     <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.GET_TASKS"/>
+    <uses-permission android:name="android.permission.REAL_GET_TASKS"/>
+    <uses-permission android:name="android.permission.INJECT_EVENTS"/>
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
     <uses-permission android:name="android.permission.READ_SEARCH_INDEXABLES"/>
 
+    <protected-broadcast android:name="com.oplus.pluskey.SHORT_PRESS"/>
     <protected-broadcast android:name="com.oplus.pluskey.LONG_PRESS"/>
+    <protected-broadcast android:name="com.oplus.pluskey.CAMERA_TRIGGER_DOWN"/>
+    <protected-broadcast android:name="com.oplus.pluskey.CAMERA_TRIGGER_UP"/>
 
     <application
         android:label="@string/app_name"
@@ -71,7 +77,10 @@
             android:exported="true"
             android:directBootAware="true">
             <intent-filter>
+                <action android:name="com.oplus.pluskey.SHORT_PRESS"/>
                 <action android:name="com.oplus.pluskey.LONG_PRESS"/>
+                <action android:name="com.oplus.pluskey.CAMERA_TRIGGER_DOWN"/>
+                <action android:name="com.oplus.pluskey.CAMERA_TRIGGER_UP"/>
             </intent-filter>
         </receiver>
 

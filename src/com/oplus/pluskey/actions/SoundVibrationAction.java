@@ -7,11 +7,9 @@ import android.media.AudioManager;
 import com.oplus.pluskey.R;
 
 /**
- * Cycles RING → VIBRATE → SILENT → RING. Haptic payload encodes which mode
- * we just entered:
- *   • silent → 1 short tick
- *   • vibrate → 2 short ticks
- *   • ring → strong heavy buzz
+ * Cycles RING -> VIBRATE -> DND -> RING. On this device ringer-mode SILENT
+ * lands as vibrate + DND, so "silent" is represented by DND with ringer kept
+ * normal instead.
  */
 public class SoundVibrationAction implements Action {
     @Override
@@ -20,38 +18,44 @@ public class SoundVibrationAction implements Action {
         NotificationManager nm = ctx.getSystemService(NotificationManager.class);
         if (am == null) return;
 
-        int next;
-        int toast;
+        int filter = nm != null
+                ? nm.getCurrentInterruptionFilter()
+                : NotificationManager.INTERRUPTION_FILTER_ALL;
+        boolean dndOn = filter == NotificationManager.INTERRUPTION_FILTER_NONE
+                || filter == NotificationManager.INTERRUPTION_FILTER_PRIORITY;
+
+        if (dndOn) {
+            if (nm != null && nm.isNotificationPolicyAccessGranted()) {
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL);
+            }
+            am.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
+            Haptics.longBuzz(ctx);
+            Feedback.show(ctx, R.string.feedback_ring);
+            return;
+        }
+
         switch (am.getRingerMode()) {
             case AudioManager.RINGER_MODE_NORMAL:
-                next  = AudioManager.RINGER_MODE_VIBRATE;
-                toast = R.string.feedback_vibrate;
+                am.setRingerMode(AudioManager.RINGER_MODE_VIBRATE);
+                Haptics.tickTwice(ctx);
+                Feedback.show(ctx, R.string.feedback_vibrate);
                 break;
             case AudioManager.RINGER_MODE_VIBRATE:
-                next  = AudioManager.RINGER_MODE_SILENT;
-                toast = R.string.feedback_silent;
+                if (nm == null || !nm.isNotificationPolicyAccessGranted()) {
+                    Feedback.show(ctx, R.string.feedback_dnd_no_perm);
+                    return;
+                }
+                am.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE);
+                Haptics.tickOnce(ctx);
+                Feedback.show(ctx, R.string.feedback_silent);
                 break;
             case AudioManager.RINGER_MODE_SILENT:
             default:
-                next  = AudioManager.RINGER_MODE_NORMAL;
-                toast = R.string.feedback_ring;
+                am.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
+                Haptics.longBuzz(ctx);
+                Feedback.show(ctx, R.string.feedback_ring);
                 break;
         }
-
-        // Setting SILENT requires DND policy access on Android Q+
-        if (next == AudioManager.RINGER_MODE_SILENT
-                && nm != null && !nm.isNotificationPolicyAccessGranted()) {
-            // fall back to vibrate if we somehow lost DND access
-            next = AudioManager.RINGER_MODE_VIBRATE;
-            toast = R.string.feedback_vibrate;
-        }
-        am.setRingerMode(next);
-
-        switch (next) {
-            case AudioManager.RINGER_MODE_SILENT:  Haptics.tickOnce(ctx); break;
-            case AudioManager.RINGER_MODE_VIBRATE: Haptics.tickTwice(ctx); break;
-            case AudioManager.RINGER_MODE_NORMAL:  Haptics.longBuzz(ctx); break;
-        }
-        Feedback.show(ctx, toast);
     }
 }

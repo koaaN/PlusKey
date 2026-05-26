@@ -10,7 +10,7 @@ public final class Constants {
     /** The hardware key the OnePlus 13s "Plus Key" reports (BTN_TRIGGER_HAPPY32). */
     public static final int PLUS_KEY_KEYCODE = KeyEvent.KEYCODE_ASSIST;
 
-    /** Long-press threshold. Below this is treated as a short-press (ignored). */
+    /** Long-press threshold. Below this is treated as a short-press. */
     public static final long LONG_PRESS_MS = 400L;
 
     // ===== action ids — persisted as int in Settings.System =====
@@ -35,8 +35,15 @@ public final class Constants {
     public static final int DEFAULT_DISPLAY_ACTION = ACTION_SOUND_VIB;
 
     // ===== Settings.System keys =====
+    public static final String KEY_PLUSKEY_SHORT_ACTION = "pluskey_short_action";
     public static final String KEY_PLUSKEY_ACTION       = "pluskey_action";
     public static final String KEY_PLUSKEY_CAMERA_MODE  = "pluskey_camera_mode";
+    public static final String KEY_PLUSKEY_SHORT_SCREEN_ON_ONLY =
+            "pluskey_short_screen_on_only";
+    public static final String KEY_PLUSKEY_CAMERA_TRIGGER =
+            "pluskey_camera_trigger";
+    public static final String KEY_PLUSKEY_CAMERA_TRIGGER_PKGS =
+            "pluskey_camera_trigger_pkgs";
     /** Package name of the user-chosen "Open app" target (string). */
     public static final String KEY_PLUSKEY_OPEN_APP_PKG = "pluskey_open_app_pkg";
 
