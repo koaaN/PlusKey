@@ -1,276 +1,292 @@
-# Plus Key — custom-ROM integration guide
+# Plus Key custom ROM integration guide
 
-The OnePlus 13s (pagani) replaces the legacy alert-slider with a programmable
-"Plus Key". Stock OOS surfaces it as a configurable shortcut (camera,
-flashlight, sound profile, etc.) with its own first-class Settings page.
+The OnePlus 13s / 13T family in this tree is built as `infiniti`. It replaces
+the old alert slider flow with a programmable Plus Key. Stock OOS exposes that
+key as a first-class shortcut for actions such as camera, flashlight,
+screenshot, recorder, and sound profile changes.
 
-Bringing the same experience to a custom ROM takes **three independent
-pieces** that together replace the AOSP / LineageOS "Assist key" plumbing:
+This custom ROM implementation has three independent pieces. Together they
+replace the AOSP and LineageOS Assist-key plumbing with the PlusKey APK.
 
 | # | Piece | Lives in | Role |
 |---|-------|----------|------|
-| 1 | **PlusKey APK** | `parts/PlusKey/` (in-tree app) | User-facing UI + the action runner |
-| 2 | **System Settings re-wiring** | `patches/0009` *(add)* + `overlay-lineage/.../config.xml` *(remove)* | New "Plus Key" root entry, old "Assist key" category hidden |
-| 3 | **Framework key handler** | `patches/0010` (PhoneWindowManager + new `PaganiPlusKey` helper) | Routes `KEYCODE_ASSIST` to the APK via a broadcast |
+| 1 | PlusKey APK | `device/oneplus/infiniti/parts/PlusKey/` | User-facing UI and action runner |
+| 2 | Settings integration | `patches/0009-settings-pluskey-category.patch` and `patches/0011-lineage-hide-assist-key.patch` | Adds the Settings homepage entry and hides LineageParts Assist controls |
+| 3 | Framework key handler | `patches/0010-pwm-pluskey-handler.patch` | Routes `KEYCODE_ASSIST` to the APK through broadcasts |
 
-The pieces are intentionally decoupled — if you're porting to a different
-OnePlus model with the same hardware key behaviour, you can mostly reuse
-piece 1 verbatim and only re-tune pieces 2 + 3 for the new device codename.
+The pieces are intentionally decoupled. If the APK is missing, the framework
+broadcasts are harmless no-ops. If the framework patch is missing, the Plus Key
+page is still reachable from Settings. This makes bring-up easier because each
+piece can be verified on its own.
 
-Hardware contract (verified on pagani): the key reports a standard Android
-`KEYCODE_ASSIST` (long-press to fire), the same keycode the AOSP "Assist"
-button family uses on legacy phones. Nothing kernel-side is special — all
-the work is in userspace.
+Hardware contract verified for this build: the physical Plus Key reports the
+standard Android `KEYCODE_ASSIST`. No kernel-side special handling is required
+for the integration described here.
 
----
+## Piece 1 - PlusKey APK
 
-## Piece 1 — the PlusKey APK (`parts/PlusKey/`)
+`device/oneplus/infiniti/parts/PlusKey/` contains the in-tree, platform-signed
+app installed to `/system_ext`. There are no prebuilts.
 
-A small platform-signed app, installed to `/system_ext`, that owns the
-runtime behaviour. The whole thing is in-tree source, no prebuilts.
-
-```
+```text
 parts/PlusKey/
-├── Android.bp            # android_app, platform-signed, system_ext_specific
-├── AndroidManifest.xml   # no MAIN/LAUNCHER, see "Entry points" below
-├── com.oplus.pluskey.xml # privapp allowlist (signature perms)
-├── res/                  # Material You UI, vector drawables, layouts
-└── src/                  # Kotlin/Java sources
+|-- Android.bp
+|-- AndroidManifest.xml
+|-- com.oplus.pluskey.xml
+|-- res/
+`-- src/
 ```
 
-### Why platform-signed + privileged
-The app needs:
-- `WRITE_SECURE_SETTINGS` / `WRITE_SETTINGS` — saving the user's chosen
-  action persists in `Settings.System` (the AOSP/Lineage long-press
-  pipeline already reads from `Settings.System` for short/long press
-  defaults; the PlusKey APK uses the same store for consistency).
-- `ACCESS_NOTIFICATION_POLICY` — DND toggle action.
-- `MODIFY_AUDIO_SETTINGS` — ringer-mode cycle action.
-- `STATUS_BAR_SERVICE`, `CAPTURE_VIDEO_OUTPUT`, `MANAGE_INPUT_DEVICES`,
-  `MONITOR_INPUT` — flashlight, screenshot, camera launch, etc.
+The app is privileged and platform-signed because its actions need signature or
+privileged permissions, including:
 
-All declared in `com.oplus.pluskey.xml` (privapp allowlist). The build
-fails closed if any of these aren't present in the allowlist, which
-catches "I forgot to copy the xml" regressions automatically.
+- `WRITE_SECURE_SETTINGS` / `WRITE_SETTINGS` for storing the selected actions
+  in `Settings.System`.
+- `ACCESS_NOTIFICATION_POLICY` for Do Not Disturb changes.
+- `MODIFY_AUDIO_SETTINGS` for ringer-mode changes.
+- `STATUS_BAR_SERVICE`, `CAPTURE_VIDEO_OUTPUT`, `MANAGE_INPUT_DEVICES`, and
+  `MONITOR_INPUT` for actions such as screenshots, camera triggers, and input
+  handling.
 
-### Entry points (no LAUNCHER)
-There is **no `MAIN`/`LAUNCHER` activity** — by design. The app must be
-unreachable from the Pixel/Lineage launcher because it has nothing
-useful at the activity-root level; everything happens via three
-explicit intents:
+The privapp allowlist is `com.oplus.pluskey.xml`. Keeping the permission list in
+the allowlist makes missing-permission regressions fail during build instead of
+silently breaking at runtime.
+
+### Entry points
+
+There is no launcher entry. The Settings app opens the Plus Key UI explicitly:
 
 | Intent action | Target | Purpose |
 |---------------|--------|---------|
-| `com.oplus.pluskey.SETTINGS` | Settings activity | Opened from the "Plus Key" Settings entry (piece 2) |
-| `com.oplus.pluskey.AI_SETTINGS` | AI settings stub activity | Opened from the "AI" Settings entry (piece 2) |
-| `com.oplus.pluskey.LONG_PRESS` | Broadcast receiver | Fired by the framework key handler (piece 3) |
+| `com.oplus.pluskey.SETTINGS` | Settings activity | Opened from the Settings homepage Plus Key entry |
+| `com.oplus.pluskey.SHORT_PRESS` | Broadcast receiver | Fired by `PhoneWindowManager` on short press |
+| `com.oplus.pluskey.LONG_PRESS` | Broadcast receiver | Fired by `PhoneWindowManager` on long press |
+| `com.oplus.pluskey.CAMERA_TRIGGER_DOWN` | Broadcast receiver | Fired when the Assist key goes down for camera-trigger handling |
+| `com.oplus.pluskey.CAMERA_TRIGGER_UP` | Broadcast receiver | Fired when the Assist key is released for camera-trigger handling |
 
-The receiver reads the user's saved action from `Settings.System` and
-runs it (toggle flashlight, switch ringer, etc.). It does not start an
-activity for headless actions, so a long-press on the lockscreen runs
-the action without unlocking the device.
+The receiver reads the current action from `Settings.System` and dispatches it.
+Headless actions do not start an activity, so they can run from the lockscreen
+where Android policy allows it.
 
-### First-run side-effects
-On boot completion the app clears the system `ASSISTANT` role. The
-framework would otherwise auto-launch Gemini (or whatever holds the
-assistant role) on `KEYCODE_ASSIST` short-press, which conflicts with
-piece 3's intercept logic. Clearing the role is idempotent and a no-op
-if the role was already empty.
+On boot, the app clears the system `ASSISTANT` role. That prevents Gemini or any
+other assistant role holder from competing with this key path.
 
----
+## Piece 2 - Settings integration
 
-## Piece 2 — Settings integration (add + remove)
+There are two Settings-side changes.
 
-Two halves: **add** a dedicated "Plus Key" root entry, **remove** the
-legacy LineageParts "Assist key" category so users don't see two ways
-to configure the same hardware key.
+### Add the Plus Key homepage entry
 
-### Add — `patches/0009-settings-pluskey-category.patch`
+`patches/0009-settings-pluskey-category.patch` applies to
+`packages/apps/Settings`.
 
-Patches `packages/apps/Settings`. Inserts a new `PreferenceCategory`
-into `res/xml/top_level_settings.xml` at `order=-115` — between
-"Personalize" (-120) and "System info" (-110), so it lands above
-"Storage" in the homepage scroll.
+It adds:
 
-Inside the category two `HomepagePreference`s:
+- `res/drawable/ic_settings_pluskey.xml`
+- `top_level_pluskey_title`
+- `top_level_pluskey_summary`
+- A `HomepagePreference` for `com.oplus.pluskey.SETTINGS`
+
+The homepage entry uses an explicit intent because the target UI lives in the
+separate `com.oplus.pluskey` APK:
 
 ```xml
-<HomepagePreference
+<com.android.settings.widget.HomepagePreference
     android:icon="@drawable/ic_settings_pluskey"
+    android:key="top_level_pluskey"
+    android:order="-45"
     android:title="@string/top_level_pluskey_title"
     android:summary="@string/top_level_pluskey_summary"
-    android:fragment=""
-    android:order="-115">
+    settings:highlightableMenuKey="@string/top_level_pluskey_title">
+
     <intent
         android:action="com.oplus.pluskey.SETTINGS"
         android:targetPackage="com.oplus.pluskey" />
-</HomepagePreference>
+</com.android.settings.widget.HomepagePreference>
 ```
 
-Same shape for the AI entry, just with `.AI_SETTINGS`. Two new vector
-drawables (`ic_settings_pluskey.xml`, `ic_settings_ai.xml`) provide the
-icons — a pill-with-plus and a sparkle.
+The same patch updates both `res/xml/top_level_settings.xml` and
+`res/xml/top_level_settings_expressive.xml` so the entry is present in either
+homepage layout.
 
-Why a `HomepagePreference` with an explicit `<intent>` instead of a
-fragment ref? Because the target lives in a separate APK (piece 1) and
-must launch as an activity, not be embedded. The Settings homepage
-respects the intent and starts the APK's settings activity inline,
-matching the look-and-feel of the other root entries.
+### Hide legacy Assist key controls
 
-### Remove — `overlay-lineage/.../config.xml`
+`patches/0011-lineage-hide-assist-key.patch` applies to
+`device/oneplus/infiniti`.
 
-Drops the **Assist (8)** bit from `config_deviceHardwareKeys` and
-`config_deviceHardwareWakeKeys`, leaving only Volume rocker (64):
+It adds the hardware-key bitfields to:
+
+```text
+overlay-lineage/lineage-sdk/lineage/res/res/values/config.xml
+```
+
+with only the Volume rocker bit enabled:
 
 ```xml
 <integer name="config_deviceHardwareKeys">64</integer>
 <integer name="config_deviceHardwareWakeKeys">64</integer>
 ```
 
-LineageParts uses these bitfields to decide which "Buttons" categories
-to show under System → Buttons. Without the Assist bit it stops
-rendering the "Assist key" category (`packages/apps/LineageParts:
-res/xml/button_settings.xml`), so the legacy long/short-press action
-pickers disappear cleanly.
+LineageParts uses these bitfields to decide which categories are shown under
+System -> Buttons. Dropping the Assist bit hides the old Assist key short-press
+and long-press pickers, so users only see the Plus Key UI.
 
-This is purely cosmetic — the framework still receives the key event
-regardless of this bitfield, and piece 3 intercepts it before the
-LineageParts/AOSP long-press dispatch chain runs.
+This is UI cleanup only. The framework still receives `KEYCODE_ASSIST`, and
+piece 3 handles it before the old Assist action path is used.
 
-### Don't forget: the Lineage `KeyHandler`
-On most LineageOS-supported phones, hardware-key tuning also goes
-through `KeyHandler.java` in the device tree. Pagani's KeyHandler does
-**not** need to touch `KEYCODE_ASSIST` because piece 3 owns it. Leave
-the existing KeyHandler entries (volume, alert slider where present)
-unchanged.
+## Piece 3 - Framework key handler
 
----
+`patches/0010-pwm-pluskey-handler.patch` applies to `frameworks/base`.
 
-## Piece 3 — Framework key handler (`patches/0010-pwm-pluskey-handler.patch`)
+It modifies:
 
-Patches `frameworks/base/services/core/java/com/android/server/policy/
-PhoneWindowManager.java` and adds a tiny helper class
-`PaganiPlusKey.java` next to it.
+```text
+services/core/java/com/android/server/policy/PhoneWindowManager.java
+```
 
-### What it does
-`PhoneWindowManager` is where AOSP's hard-coded assist-key behaviour
-lives: `assistPress()` short-press, `assistLongPress()` long-press. The
-patch wraps both with a pagani gate:
+and adds:
+
+```text
+services/core/java/com/android/server/policy/InfinitiPlusKey.java
+```
+
+`PhoneWindowManager` is where Android handles the Assist key. The patch gates
+that behavior for Infiniti devices and forwards the key events to the APK.
+
+Short press:
 
 ```java
 private void assistPress() {
-    if (PaganiPlusKey.isPagani()) {
+    if (InfinitiPlusKey.isInfiniti()) {
         cancelPreloadRecentApps();
-        return;        // short press = no-op
+        InfinitiPlusKey.fireShortPress(mContext);
+        return;
     }
-    // ... untouched AOSP code below ...
-}
 
-private void assistLongPress() {
-    if (PaganiPlusKey.isPagani()) {
-        cancelPreloadRecentApps();
-        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Plus Key - Long Press");
-        PaganiPlusKey.fireLongPress(mContext);
-        return;       // long press = broadcast to APK
-    }
-    // ... untouched AOSP code below ...
+    // Existing AOSP/Lineage behavior continues below.
 }
 ```
 
-A third tweak fixes `supportLongPress()` in the assist-key
-`KeyRule` inner class:
+Long press:
+
+```java
+private void assistLongPress() {
+    if (InfinitiPlusKey.isInfiniti()) {
+        cancelPreloadRecentApps();
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS,
+                "Plus Key - Long Press");
+        InfinitiPlusKey.fireLongPress(mContext);
+        return;
+    }
+
+    // Existing AOSP/Lineage behavior continues below.
+}
+```
+
+The patch also forces long-press detection on Infiniti:
 
 ```java
 boolean supportLongPress() {
-    // On pagani the Plus Key always wants long-press detection so the
-    // PlusKey APK can dispatch its configured action; ignore whatever
-    // the system assist setting is.
-    return PaganiPlusKey.isPagani()
+    return InfinitiPlusKey.isInfiniti()
             || mAssistLongPressAction != Action.NOTHING;
 }
 ```
 
-Without this, the framework would refuse to even *detect* a long-press
-if the user's assist setting was "do nothing", and piece 1's broadcast
-would never fire.
+Without that, Android can skip long-press detection when the old Assist
+long-press setting is configured as "do nothing", which would prevent the
+PlusKey APK from receiving the long-press broadcast.
 
-### Why a helper class?
-Two reasons:
+Finally, `handleKeyGesture()` fires camera-trigger down/up broadcasts for
+`KEYCODE_ASSIST`. The APK uses those to support camera-style press/release
+behavior.
 
-1. Keeps the patch surface tiny. `PaganiPlusKey.java` is a separate
-   new file; the changes to `PhoneWindowManager.java` are only the
-   three intercept blocks shown above. Easier to review, easier to
-   rebase across `framework/base` updates.
-2. Gives the device check (`isPagani()`) and the broadcast send
-   (`fireLongPress`) one home, with proper caching of the device-prop
-   read (`ro.lineage.device` / `ro.evolution.device`) so we don't stat
-   the prop on every key press.
+### InfinitiPlusKey
 
-### Why not soong config / a per-device subclass?
-Both would be cleaner in isolation, but soong config can't gate Java
-code paths cheaply, and a `PhoneWindowManager` subclass would require a
-much bigger frameworks/base diff (factory + binding). The
-`SystemProperties.get()` check on first use is essentially free.
+`InfinitiPlusKey` keeps the device gate and broadcast plumbing out of
+`PhoneWindowManager`.
 
-### Why broadcast and not a direct method call?
-`PhoneWindowManager` runs in `system_server`; the PlusKey APK is a
-separate process at `system_ext`. Sending an Intent broadcast is the
-cleanest IPC across that boundary — no AIDL contract to maintain, no
-runtime-permission dance, and the broadcast survives APK upgrades
-without restarting `system_server`.
+The device check is cached and currently recognizes:
 
-The broadcast carries no extras; the APK reads the current configured
-action from `Settings.System` and runs it. That keeps the action store
-authoritative regardless of which side (Settings UI or framework
-handler) was last updated.
+```java
+"infiniti",
+"OP60FFL1",
+"OP611FL1",
+```
 
----
+It checks the common device properties:
 
-## Porting to another OnePlus device
+- `ro.lineage.device`
+- `ro.evolution.device`
+- `ro.product.device`
+- `ro.product.vendor.device`
+- `ro.vendor.product.device`
 
-If you're bringing this to a different OnePlus model with the same
-hardware-key behaviour:
+The helper sends explicit package-targeted broadcasts to `com.oplus.pluskey`.
+This keeps the IPC boundary simple: `PhoneWindowManager` runs in
+`system_server`, while the PlusKey app runs as a separate privileged app in
+`system_ext`.
 
-1. **Piece 1 (APK):** copy `parts/PlusKey/` verbatim. The only
-   device-specific assumption is that the platform certificate of the
-   target ROM signs it; that's handled automatically by `Android.bp`'s
-   `certificate: "platform"`.
-2. **Piece 2 (Settings):**
-   - Re-apply `patches/0009` to your `packages/apps/Settings` clone —
-     no device-specific bits, the strings + drawables are generic.
-   - Drop the Assist bit in **your** device's
-     `overlay-lineage/.../config.xml` (or whatever overlay your ROM
-     uses for `config_deviceHardwareKeys` /
-     `config_deviceHardwareWakeKeys`). The pagani overlay file is just
-     a template — every device has its own.
-3. **Piece 3 (framework):**
-   - Re-apply `patches/0010` to your `frameworks/base`.
-   - Update `PaganiPlusKey.isPagani()` to recognise your device
-     codename — either rename the class to your device or extend the
-     check to multiple codenames. Don't bypass the gate; that would
-     break every non-pagani OnePlus build sharing the same
-     frameworks/base.
+## Applying the patches
 
-For a device that does NOT report `KEYCODE_ASSIST` for its side button,
-none of this applies — you'd need a `KeyHandler` mapping in the device
-tree first.
+From the Android workspace root:
 
----
+```sh
+git -C packages/apps/Settings apply ../../../patches/0009-settings-pluskey-category.patch
+git -C frameworks/base apply ../../patches/0010-pwm-pluskey-handler.patch
+git -C device/oneplus/infiniti apply ../../../patches/0011-lineage-hide-assist-key.patch
+```
+
+If your shell is already in `/home/koaan/android/INFIX`, using absolute paths is
+less error-prone:
+
+```sh
+git -C packages/apps/Settings apply /home/koaan/android/INFIX/patches/0009-settings-pluskey-category.patch
+git -C frameworks/base apply /home/koaan/android/INFIX/patches/0010-pwm-pluskey-handler.patch
+git -C device/oneplus/infiniti apply /home/koaan/android/INFIX/patches/0011-lineage-hide-assist-key.patch
+```
+
+## Porting notes
+
+For another OnePlus device with the same `KEYCODE_ASSIST` hardware behavior:
+
+1. Copy `parts/PlusKey/` and make sure the APK is platform-signed and installed
+   as privileged under `/system_ext`.
+2. Reuse `patches/0009-settings-pluskey-category.patch` for Settings unless the
+   target ROM has a substantially different homepage layout.
+3. Apply the Assist-bit removal to that device's own Lineage overlay. Do not
+   assume Infiniti's overlay path exists on another tree.
+4. Rename or extend `InfinitiPlusKey` and update the supported codename list.
+   Keep the device gate. Removing it would change Assist-key behavior for every
+   device sharing that `frameworks/base` build.
+
+If the target device does not report `KEYCODE_ASSIST` for the side key, this
+integration is not enough. That device first needs a keylayout or KeyHandler
+mapping that turns the hardware key into `KEYCODE_ASSIST`.
 
 ## Smoke test
 
-After flashing, verify each piece independently:
+After flashing:
 
-1. **Piece 1 (APK):** `pm list packages | grep pluskey` shows the
-   package; `dumpsys package com.oplus.pluskey | grep flags` shows
-   `SYSTEM` + `PRIVILEGED`.
-2. **Piece 2 (Settings):** Settings homepage shows the **Plus Key**
-   entry. System → Buttons no longer shows the Assist-key category.
-3. **Piece 3 (framework):** `adb shell input keyevent --longpress
-   KEYCODE_ASSIST` runs the configured action. `logcat -s PaganiPlusKey`
-   shows `fireLongPress` when you press-and-hold the physical key.
+1. Check the APK:
 
-If any piece fails, the others fall back gracefully — a missing APK
-makes the broadcast no-op, a missing PhoneWindowManager patch still
-leaves the APK reachable from Settings, and so on. That's intentional:
-the loose coupling lets you debug one at a time without a brick risk.
+```sh
+adb shell pm list packages | grep pluskey
+adb shell dumpsys package com.oplus.pluskey | grep flags
+```
+
+The package should exist and show system/privileged flags.
+
+2. Check Settings:
+
+- The Settings homepage shows a Plus Key entry.
+- System -> Buttons no longer shows the legacy Assist key category.
+
+3. Check framework dispatch:
+
+```sh
+adb shell input keyevent --longpress KEYCODE_ASSIST
+adb logcat -s InfinitiPlusKey
+```
+
+The configured action should run, and logcat should show the relevant
+`InfinitiPlusKey` broadcast log such as `fireLongPress`.
